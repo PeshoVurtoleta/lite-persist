@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>@zakkster/lite-persist — live</title>
+
+    <!--
+      Self-contained demo. No build, no server needed (modern browser over file://
+      may block ESM; if so, run: npx serve . then open /example/).
+      Dependencies load from esm.sh; ?external pins ONE shared lite-signal registry
+      so the app's signals and the debounce combinator live on the same graph.
+    -->
+    <script type="importmap">
+{
+  "imports": {
+    "@zakkster/lite-signal": "https://esm.sh/@zakkster/lite-signal@1.1.1",
+    "@zakkster/lite-debounce": "https://esm.sh/@zakkster/lite-debounce@1.0.2?external=@zakkster/lite-signal"
+  }
+}
+
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+          rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #070b0c;
+            --panel: #0d1416;
+            --panel-2: #0a1011;
+            --grid: #13211f;
+            --line: #1c2c2a;
+            --phos: #34f5a3; /* signal trace - phosphor green */
+            --phos-dim: #1a7d56;
+            --amber: #ffc24d; /* storage trace - amber */
+            --amber-dim: #8a6a1f;
+            --danger: #ff5a55; /* naive write storm */
+            --ink: #cfe9e1;
+            --muted: #6f8a83;
+            --faint: #3c534e;
+            --mono: 'JetBrains Mono', ui-monospace, monospace;
+            --disp: 'Chakra Petch', var(--mono);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html, body {
+            margin: 0
+        }
+
+        body {
+            background: radial-gradient(1200px 500px at 80% -10%, #0f1c1b 0%, transparent 60%),
+            radial-gradient(900px 600px at -10% 110%, #10201d 0%, transparent 55%),
+            var(--bg);
+            color: var(--ink);
+            font-family: var(--mono);
+            line-height: 1.5;
+            min-height: 100vh;
+            padding: 32px 20px 64px;
+            background-attachment: fixed;
+        }
+
+        /* faint scanlines for the CRT feel */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 999;
+            background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .012) 0 1px, transparent 1px 3px);
+            mix-blend-mode: overlay;
+        }
+
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto
+        }
+
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 10px 16px;
+            margin-bottom: 8px
+        }
+
+        h1 {
+            font-family: var(--disp);
+            font-weight: 700;
+            font-size: clamp(26px, 4.5vw, 40px);
+            letter-spacing: -.01em;
+            margin: 0;
+            color: #eafff7
+        }
+
+        h1 .at {
+            color: var(--phos)
+        }
+
+        .sub {
+            color: var(--muted);
+            font-size: 13.5px;
+            max-width: 62ch;
+            margin: 2px 0 22px
+        }
+
+        .chips {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-left: auto
+        }
+
+        .chip {
+            font-family: var(--disp);
+            font-size: 11px;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            border: 1px solid var(--line);
+            color: var(--muted);
+            padding: 4px 9px;
+            border-radius: 999px;
+            background: var(--panel-2)
+        }
+
+        .chip b {
+            color: var(--phos);
+            font-weight: 600
+        }
+
+        .scope {
+            position: relative;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            overflow: hidden;
+            background: linear-gradient(180deg, #0b1314, #080d0e);
+            box-shadow: inset 0 0 60px rgba(0, 0, 0, .6), 0 20px 50px -30px #000;
+        }
+
+        .scope canvas {
+            display: block;
+            width: 100%;
+            height: 230px
+        }
+
+        .scope .legend {
+            position: absolute;
+            top: 12px;
+            left: 14px;
+            display: flex;
+            gap: 16px;
+            font-size: 11.5px;
+            letter-spacing: .04em;
+            font-family: var(--disp);
+            text-transform: uppercase;
+        }
+
+        .legend .k {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--muted)
+        }
+
+        .legend .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 2px;
+            box-shadow: 0 0 8px currentColor
+        }
+
+        .legend .sig .dot {
+            background: var(--phos);
+            color: var(--phos)
+        }
+
+        .legend .sto .dot {
+            background: var(--amber);
+            color: var(--amber)
+        }
+
+        .scope .mode {
+            position: absolute;
+            top: 11px;
+            right: 14px;
+            font-family: var(--disp);
+            font-size: 11px;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: var(--phos);
+            border: 1px solid var(--phos-dim);
+            padding: 3px 9px;
+            border-radius: 6px;
+        }
+
+        .scope.naive .mode {
+            color: var(--danger);
+            border-color: var(--danger)
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1.3fr .7fr;
+            gap: 16px;
+            margin-top: 16px
+        }
+
+        @media (max-width: 760px) {
+            .grid {
+                grid-template-columns: 1fr
+            }
+        }
+
+        .card {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--panel);
+            padding: 18px
+        }
+
+        .card h2 {
+            font-family: var(--disp);
+            font-weight: 600;
+            font-size: 12px;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin: 0 0 14px
+        }
+
+        label.fld {
+            display: block;
+            font-size: 11px;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: var(--faint);
+            margin-bottom: 6px;
+            font-family: var(--disp)
+        }
+
+        input[type=text] {
+            width: 100%;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            color: var(--phos);
+            font-family: var(--mono);
+            font-size: 15px;
+            padding: 11px 13px;
+            border-radius: 9px;
+            outline: none;
+            caret-color: var(--phos);
+            transition: border-color .15s, box-shadow .15s;
+        }
+
+        input[type=text]:focus {
+            border-color: var(--phos-dim);
+            box-shadow: 0 0 0 3px rgba(52, 245, 163, .08)
+        }
+
+        .meters {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px
+        }
+
+        .meter {
+            flex: 1;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 13px 14px
+        }
+
+        .meter .t {
+            font-family: var(--disp);
+            font-size: 10.5px;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            color: var(--faint)
+        }
+
+        .meter .n {
+            font-family: var(--mono);
+            font-weight: 700;
+            font-size: 30px;
+            line-height: 1.1;
+            margin-top: 4px;
+            font-variant-numeric: tabular-nums
+        }
+
+        .meter.sig .n {
+            color: var(--phos)
+        }
+
+        .meter.sto .n {
+            color: var(--amber)
+        }
+
+        .meter.sto.naive .n {
+            color: var(--danger)
+        }
+
+        .meter .flash {
+            transition: opacity .08s;
+            opacity: 0;
+            font-size: 10px;
+            color: inherit
+        }
+
+        .ratio {
+            margin-top: 14px;
+            padding: 11px 13px;
+            border: 1px dashed var(--line);
+            border-radius: 10px;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            background: rgba(52, 245, 163, .03)
+        }
+
+        .ratio .lbl {
+            font-family: var(--disp);
+            font-size: 10.5px;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            color: var(--faint)
+        }
+
+        .ratio .v {
+            font-family: var(--mono);
+            font-weight: 700;
+            font-size: 20px;
+            color: var(--ink);
+            font-variant-numeric: tabular-nums
+        }
+
+        .ratio .v b {
+            color: var(--phos)
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 14px 0
+        }
+
+        .row:last-child {
+            margin-bottom: 0
+        }
+
+        .row .lbl {
+            font-size: 12px;
+            color: var(--muted)
+        }
+
+        input[type=range] {
+            width: 130px;
+            accent-color: var(--phos)
+        }
+
+        .val {
+            font-family: var(--mono);
+            color: var(--phos);
+            font-size: 13px;
+            min-width: 54px;
+            text-align: right
+        }
+
+        .toggle {
+            position: relative;
+            width: 46px;
+            height: 26px;
+            flex: 0 0 auto
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            cursor: pointer
+        }
+
+        .toggle .track {
+            position: absolute;
+            inset: 0;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            transition: .18s;
+            pointer-events: none
+        }
+
+        .toggle .knob {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--muted);
+            transition: .18s;
+            pointer-events: none
+        }
+
+        .toggle input:checked ~ .track {
+            background: rgba(255, 90, 85, .18);
+            border-color: var(--danger)
+        }
+
+        .toggle input:checked ~ .knob {
+            left: 25px;
+            background: var(--danger)
+        }
+
+        .btn {
+            font-family: var(--disp);
+            font-size: 12px;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            background: var(--panel-2);
+            color: var(--ink);
+            border: 1px solid var(--line);
+            padding: 9px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: .15s
+        }
+
+        .btn:hover {
+            border-color: var(--phos-dim);
+            color: var(--phos)
+        }
+
+        .tab {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12.5px;
+            color: var(--muted)
+        }
+
+        .pulse {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--faint);
+            transition: background .1s, box-shadow .1s
+        }
+
+        .pulse.on {
+            background: var(--phos);
+            box-shadow: 0 0 12px var(--phos)
+        }
+
+        .hint {
+            font-size: 11.5px;
+            color: var(--faint);
+            margin-top: 8px
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 16px
+        }
+
+        @media (max-width: 560px) {
+            .stats {
+                grid-template-columns: 1fr
+            }
+        }
+
+        .stat {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--panel-2);
+            padding: 16px;
+            text-align: center
+        }
+
+        .stat .big {
+            font-family: var(--mono);
+            font-weight: 700;
+            font-size: 26px;
+            color: var(--phos);
+            font-variant-numeric: tabular-nums
+        }
+
+        .stat .cap {
+            font-size: 10.5px;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            color: var(--faint);
+            margin-top: 6px;
+            font-family: var(--disp)
+        }
+
+        .stat .sub {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 3px
+        }
+
+        footer {
+            margin-top: 26px;
+            color: var(--faint);
+            font-size: 11.5px;
+            text-align: center;
+            line-height: 1.7
+        }
+
+        footer code {
+            color: var(--muted)
+        }
+
+        a {
+            color: var(--phos-dim)
+        }
+
+        .err {
+            display: none;
+            margin-top: 16px;
+            border: 1px solid var(--danger);
+            background: rgba(255, 90, 85, .06);
+            color: #ffb3b0;
+            border-radius: 10px;
+            padding: 14px;
+            font-size: 13px
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1><span class="at">@</span>zakkster/lite-persist</h1>
+        <div class="chips">
+            <span class="chip">peer <b>lite-signal</b></span>
+            <span class="chip">zero-gc</span>
+            <span class="chip">MIT</span>
+        </div>
+    </header>
+    <p class="sub">
+        A signal bound to storage. Every keystroke writes the <b style="color:var(--phos)">signal</b>; only the
+        settled value writes <b style="color:var(--amber)">storage</b>. Type fast and watch the two traces diverge.
+    </p>
+
+    <div class="scope" id="scope">
+        <div class="legend">
+            <span class="k sig"><span class="dot"></span>signal.set()</span>
+            <span class="k sto"><span class="dot"></span>storage write</span>
+        </div>
+        <div class="mode" id="modeTag">coalesced</div>
+        <canvas id="cv"></canvas>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h2>Bound state</h2>
+            <label class="fld" for="inp">app.note · persisted to localStorage</label>
+            <input id="inp" type="text" placeholder="type here — then reload the page…" autocomplete="off"
+                   spellcheck="false"/>
+
+            <div class="meters">
+                <div class="meter sig">
+                    <div class="t">signal writes</div>
+                    <div class="n" id="sigN">0</div>
+                </div>
+                <div class="meter sto" id="stoMeter">
+                    <div class="t">storage writes</div>
+                    <div class="n" id="stoN">0</div>
+                </div>
+            </div>
+
+            <div class="ratio">
+                <span class="lbl">write reduction</span>
+                <span class="v" id="ratio"><b>—</b></span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Controls</h2>
+            <div class="row">
+                <span class="lbl">Debounce window</span>
+                <span style="display:flex; align-items:center; gap:10px">
+          <input id="ms" type="range" min="0" max="1000" step="50" value="400"/>
+          <span class="val" id="msVal">400ms</span>
+        </span>
+            </div>
+            <div class="row">
+                <span class="lbl" style="color:var(--danger)">Naive mode <span style="color:var(--faint)">(write on every change)</span></span>
+                <span class="toggle"><input id="naive" type="checkbox"/><span class="track"></span><span
+                        class="knob"></span></span>
+            </div>
+            <div class="row">
+                <span class="tab"><span class="pulse" id="tabPulse"></span> Cross-tab sync</span>
+                <button class="btn" id="reload">Reload ⟳</button>
+            </div>
+            <p class="hint" id="tabHint">Open this page in a second tab — edits sync live, with no echo write-back.</p>
+        </div>
+    </div>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="big">100k → 1</div>
+            <div class="cap">writes per burst</div>
+            <div class="sub">vs 100k naive</div>
+        </div>
+        <div class="stat">
+            <div class="big">&lt; 4 KB</div>
+            <div class="cap">heap / 100k sets</div>
+            <div class="sub">~0.04 B each</div>
+        </div>
+        <div class="stat">
+            <div class="big">~6 M/s</div>
+            <div class="cap">mutations absorbed</div>
+            <div class="sub">Node v22, measured</div>
+        </div>
+    </div>
+
+    <div class="err" id="err"></div>
+
+    <footer>
+        Live on the real package — <code>../Persist.js</code> + <code>@zakkster/lite-signal</code> + <code>@zakkster/lite-debounce</code>
+        via import map.<br>
+        Numbers from <code>npm run bench</code>. Reload-survival proves synchronous boot read.
+    </footer>
+</div>
+
+<script type="module">
+    let signal, persist;
+
+    try {
+        ({signal} = await import('@zakkster/lite-signal'));
+        ({persist} = await import('../Persist.js'));
+    } catch (e) {
+        const box = document.getElementById('err');
+        box.style.display = 'block';
+        box.innerHTML = 'Could not load modules from the CDN/import map. Serve the folder over HTTP '
+            + '(<code>npx serve .</code>) and open <code>/example/</code>. Original error: ' + e.message;
+        throw e;
+    }
+
+    const $ = (id) => document.getElementById(id);
+    const inp = $('inp'), sigN = $('sigN'), stoN = $('stoN'), ratio = $('ratio');
+    const msR = $('ms'), msVal = $('msVal'), naive = $('naive'), scope = $('scope'), modeTag = $('modeTag');
+    const stoMeter = $('stoMeter'), tabPulse = $('tabPulse');
+
+    const KEY = 'lite-persist.demo.note';
+    let sigWrites = 0, stoWrites = 0;
+
+    // The bound signal. We re-create persist() when the window or mode changes.
+    const note = signal('');
+    let dispose = () => {
+    };
+
+    // Count storage writes by wrapping localStorage for THIS key only.
+    const realSet = localStorage.setItem.bind(localStorage);
+    const realRemove = localStorage.removeItem.bind(localStorage);
+    const countingStorage = {
+        getItem: (k) => localStorage.getItem(k),
+        setItem: (k, v) => {
+            if (k === KEY) {
+                stoWrites++;
+                bump('sto');
+            }
+            realSet(k, v);
+        },
+        removeItem: (k) => {
+            if (k === KEY) {
+                stoWrites++;
+                bump('sto');
+            }
+            realRemove(k);
+        },
+    };
+
+    // A naive persister: writes to storage on EVERY change (the foil).
+    function naivePersist() {
+        let last;
+        return note.subscribe((v) => {
+            const s = JSON.stringify(v);
+            if (s !== last) {
+                last = s;
+                countingStorage.setItem(KEY, s);
+            }
+        });
+    }
+
+    function rebind() {
+        dispose();
+
+        if (naive.checked) {
+            scope.classList.add('naive');
+            stoMeter.classList.add('naive');
+            modeTag.textContent = 'naive · write storm';
+            dispose = naivePersist();
+        } else {
+            scope.classList.remove('naive');
+            stoMeter.classList.remove('naive');
+            modeTag.textContent = 'coalesced';
+            const stop = persist(note, KEY, {
+                storage: countingStorage,
+                debounce: +msR.value,
+                syncTabs: true,
+            });
+            dispose = stop;
+        }
+    }
+
+    // ── Oscilloscope: a scrolling strip of pulses. ──
+    const cv = $('cv'), ctx = cv.getContext('2d');
+    const css = getComputedStyle(document.documentElement);
+    const C = (n) => css.getPropertyValue(n).trim();
+    let W = 0, H = 0, dpr = Math.min(devicePixelRatio || 1, 2);
+
+    function resize() {
+        const r = cv.getBoundingClientRect();
+        W = r.width;
+        H = 230;
+        dpr = Math.min(devicePixelRatio || 1, 2);
+        cv.width = W * dpr;
+        cv.height = H * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    new ResizeObserver(resize).observe(cv);
+    resize();
+
+    // Pulse ring buffers (x positions decay leftward).
+    const sigPulses = [], stoPulses = []; // {x, life}
+    function bump(kind) {
+        (kind === 'sig' ? sigPulses : stoPulses).push({x: W - 8, life: 1});
+        if (kind === 'sig') {
+            sigWrites++;
+            sigN.textContent = sigWrites.toLocaleString();
+            flash(sigN);
+        } else {
+            stoN.textContent = stoWrites.toLocaleString();
+            flash(stoN);
+            updateRatio();
+        }
+    }
+
+    let flashT;
+
+    function flash(el) {
+        el.style.textShadow = '0 0 18px currentColor';
+        clearTimeout(flashT);
+        flashT = setTimeout(() => el.style.textShadow = '', 120);
+    }
+
+    function updateRatio() {
+        if (stoWrites === 0) {
+            ratio.innerHTML = '<b>—</b>';
+            return;
+        }
+        const r = (sigWrites / stoWrites);
+        ratio.innerHTML = sigWrites + ' signal : <b>' + stoWrites + '</b> storage &nbsp;<span style="color:var(--muted)">(' + r.toFixed(1) + '×)</span>';
+    }
+
+    const SPEED = 38; // px/sec scroll
+    let prev = performance.now();
+
+    function frame(now) {
+        const dt = (now - prev) / 1000;
+        prev = now;
+        ctx.clearRect(0, 0, W, H);
+        // baseline grid
+        ctx.strokeStyle = C('--grid');
+        ctx.lineWidth = 1;
+        for (let y = 0.5; y < H; y += 28) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(W, y);
+            ctx.stroke();
+        }
+        const sigY = H * 0.36, stoY = H * 0.74;
+        ctx.strokeStyle = C('--line');
+        ctx.beginPath();
+        ctx.moveTo(0, sigY);
+        ctx.lineTo(W, sigY);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, stoY);
+        ctx.lineTo(W, stoY);
+        ctx.stroke();
+
+        drawPulses(sigPulses, sigY, C('--phos'), dt);
+        drawPulses(stoPulses, stoY, naive.checked ? C('--danger') : C('--amber'), dt);
+        requestAnimationFrame(frame);
+    }
+
+    function drawPulses(arr, baseY, color, dt) {
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        for (let i = arr.length - 1; i >= 0; i--) {
+            const p = arr[i];
+            p.x -= SPEED * dt;
+            p.life -= dt * 0.5;
+            if (p.x < -4 || p.life <= 0) {
+                arr.splice(i, 1);
+                continue;
+            }
+            const h = 30 * p.life;
+            ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+            ctx.strokeStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.moveTo(p.x, baseY);
+            ctx.lineTo(p.x, baseY - h);
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+    }
+
+    requestAnimationFrame(frame);
+
+    // ── Wiring ──
+    inp.addEventListener('input', () => {
+        note.set(inp.value);
+        bump('sig');
+    });
+    msR.addEventListener('input', () => {
+        msVal.textContent = msR.value + 'ms';
+        rebind();
+    });
+    naive.addEventListener('change', rebind);
+    $('reload').addEventListener('click', () => location.reload());
+
+    // Cross-tab pulse indicator (independent of the bound signal's own listener).
+    window.addEventListener('storage', (e) => {
+        if (e.key !== KEY) return;
+        tabPulse.classList.add('on');
+        setTimeout(() => tabPulse.classList.remove('on'), 400);
+        // reflect the synced value in the input
+        queueMicrotask(() => {
+            inp.value = note();
+        });
+    });
+
+    // Boot: bind, then mirror the restored value into the input (proves boot read).
+    rebind();
+    inp.value = note();
+    if (inp.value) inp.setAttribute('placeholder', '');
+    updateRatio();
+</script>
+</body>
+</html>

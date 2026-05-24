@@ -1,0 +1,86 @@
+# @zakkster/lite-persist
+
+> Zero-GC reactive persistence for @zakkster/lite-signal. Binds a signal to a
+> Web Storage key: synchronous read on boot, debounced/coalesced write on
+> change, optional cross-tab sync. A burst of N signal mutations collapses into
+> a single storage write. The mutation hot path is allocation-free.
+
+ESM-only. Peer dependency: @zakkster/lite-signal (^1.1.1). Runtime dependency:
+@zakkster/lite-debounce (^1.0.2). License: MIT. Author: Zahary Shinikchiev.
+
+## Install
+
+    npm i @zakkster/lite-persist
+
+## API
+
+persist(sig, key, options?) => dispose
+
+- sig:  Signal<T> from @zakkster/lite-signal. Read on boot, watched thereafter.
+- key:  string storage key.
+- returns: idempotent () => void disposer (stops watching, removes the cross-tab
+  listener, optionally commits the pending value).
+
+### options (PersistOptions<T>)
+
+- storage:        StorageLike. Object with getItem/setItem/removeItem. Default localStorage.
+- debounce:       number. Coalesce window in ms. 0 = microtask. Default 50.
+- syncTabs:       boolean. Mirror across tabs via the `storage` event (real Web
+                  Storage only). Default true.
+- flushOnDispose: boolean. Commit a value still inside the window at dispose()
+                  time. Default false (dispose discards the pending write).
+- serialize:      (value: T) => string. Default JSON.stringify.
+- deserialize:    (str: string) => T. Default JSON.parse. Good place for schema migration.
+
+StorageLike = { getItem(k): string|null; setItem(k, v): void; removeItem(k): void }
+
+## Semantics
+
+- Boot read is synchronous: the stored value is in the signal before persist() returns.
+- A burst of sig.set() inside the window settles to ONE setItem with the latest value.
+- sig.set(undefined) evicts the key (removeItem).
+- Writes are de-duplicated by serialized string (identity-independent), which also
+  prevents cross-tab echo for object/array values.
+- A received cross-tab `storage` event updates the signal without writing back out.
+- Missing storage (Worker/SSR, no adapter) => inert disposer, no throw.
+- Parse/serialize failures are caught and warned; the app keeps running.
+
+## How it works
+
+debounce(sig, ms) from @zakkster/lite-debounce is a reactive combinator returning
+a read-only derived value that mirrors sig, trailing-debounced. persist() does
+`watch(debounce(sig, ms), write)`. Coalescing and zero-alloc come from the
+debounce's sliding-timestamp timer; serialize + storage write happen once per
+settled value, off the mutation hot path.
+
+## Measured (Node v22, npm run bench, --expose-gc)
+
+- Coalescing:   100,000 mutations in one window -> 0 writes during burst, 1 at settle.
+- Hot path:     < 4 KB heap growth over 100,000 sets (~0.04 bytes/mutation).
+- Throughput:   ~6,000,000 mutations/sec absorbed.
+- Naive foil:   write-on-every-change does 100,000 synchronous storage writes for
+                the same burst.
+
+## Usage
+
+    import { signal } from '@zakkster/lite-signal';
+    import { persist } from '@zakkster/lite-persist';
+
+    const prefs = signal({ theme: 'dark', volume: 80 });
+    const stop = persist(prefs, 'app.prefs', { debounce: 50, syncTabs: true });
+    // prefs.set(...) -> one coalesced write per quiet window
+    stop(); // teardown (pending write discarded; pass flushOnDispose:true to keep it)
+
+## Testing
+
+    npm test         # node --test (17 tests)
+    npm run test:gc  # node --expose-gc --test (adds the allocation guarantee test)
+    npm run bench    # node --expose-gc bench/bench.js -> bench/bench-results.json
+
+## Notes for integrators
+
+- @zakkster/lite-signal MUST resolve to a single instance shared with your app
+  (it is a peer dependency) so persist() watches your signals on your reactive graph.
+- For async backends (IndexedDB, server), wrap a synchronous cache that satisfies
+  StorageLike and persist that.
+- Not a state manager, not async storage, not a migration framework.

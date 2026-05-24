@@ -1,0 +1,23 @@
+{
+  "node": "v23.5.0",
+  "gc": true,
+  "sets": 100000,
+  "coalescing": {
+    "writes": 0
+  },
+  "hotPath": {
+    "deltaBytes": -7200,
+    "perSet": -0.072
+  },
+  "naive": {
+    "deltaBytes": 256,
+    "perSet": 0.00256,
+    "writes": 130000
+  },
+  "throughput": {
+    "label": "persist burst",
+    "ms": 20.446639000000005,
+    "opsPerSec": 4890779.359874255
+  },
+  "ts": "2026-05-24T21:06:06.174Z"
+}
