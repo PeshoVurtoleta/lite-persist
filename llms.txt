@@ -1,9 +1,11 @@
 # @zakkster/lite-persist
 
 > Zero-GC reactive persistence for @zakkster/lite-signal. Binds a signal to a
-> Web Storage key: synchronous read on boot, debounced/coalesced write on
-> change, optional cross-tab sync. A burst of N signal mutations collapses into
-> a single storage write. The mutation hot path is allocation-free.
+> storage key: read on boot, debounced/coalesced write on change, optional
+> cross-tab sync. A burst of N signal mutations collapses into a single storage
+> write; the mutation hot path is allocation-free. As of 1.1: asynchronous
+> storage adapters (incl. a built-in IndexedDB adapter), versioned schema
+> migrations, selective persistence (allowlist), and an encode/decode hook.
 
 ESM-only. Peer dependency: @zakkster/lite-signal (^1.1.1). Runtime dependency:
 @zakkster/lite-debounce (^1.0.2). License: MIT. Author: Zahary Shinikchiev.
@@ -14,73 +16,114 @@ ESM-only. Peer dependency: @zakkster/lite-signal (^1.1.1). Runtime dependency:
 
 ## API
 
-persist(sig, key, options?) => dispose
+persist(sig, key, options?) => PersistHandle
+idbStorage(options?) => AsyncStorageLike
 
 - sig:  Signal<T> from @zakkster/lite-signal. Read on boot, watched thereafter.
 - key:  string storage key.
-- returns: idempotent () => void disposer (stops watching, removes the cross-tab
-  listener, optionally commits the pending value).
+- returns: PersistHandle = an idempotent () => void disposer (stops watching,
+  removes the cross-tab listener, optionally commits the pending value) plus:
+    - handle.flush(): commit the current value immediately, deduped.
+    - handle.ready:  Promise<void>, resolves after the boot read is applied
+      (immediately for sync backends, after the read for async ones).
 
 ### options (PersistOptions<T>)
 
-- storage:        StorageLike. Object with getItem/setItem/removeItem. Default localStorage.
+- storage:        StorageLike | AsyncStorageLike. getItem/setItem/removeItem;
+                  methods may return Promises. Default localStorage.
 - debounce:       number. Coalesce window in ms. 0 = microtask. Default 50.
 - syncTabs:       boolean. Mirror across tabs via the `storage` event (real Web
-                  Storage only). Default true.
+                  Storage only; never for async adapters). Default true.
 - flushOnDispose: boolean. Commit a value still inside the window at dispose()
                   time. Default false (dispose discards the pending write).
 - serialize:      (value: T) => string. Default JSON.stringify.
-- deserialize:    (str: string) => T. Default JSON.parse. Good place for schema migration.
+- deserialize:    (str: string) => T. Default JSON.parse.
+- encode:         (plain: string) => string. Post-serialize transform on the
+                  stored string (encryption/compression hook). Default identity.
+- decode:         (stored: string) => string. Inverse of encode, before deserialize.
+- version:        number. Enables a { __v, data } envelope + migrations.
+- migrate:        (data, fromVersion) => T. Runs when stored version differs.
+                  Legacy unversioned data is fromVersion 0. Default identity.
+- partialize:     (state: T) => any. Persist only this subset (allowlist). Default identity.
+- merge:          (restored, current) => T. Combine on boot + cross-tab. Default
+                  replace; with partialize, shallow-merge restored over current.
+- onError:        (error, context) => void. Error sink. Default console.warn.
 
-StorageLike = { getItem(k): string|null; setItem(k, v): void; removeItem(k): void }
+StorageLike      = { getItem(k): string|null;        setItem(k,v): void;          removeItem(k): void }
+AsyncStorageLike = { getItem(k): Promise<string|null>; setItem(k,v): Promise<void>; removeItem(k): Promise<void> }
+
+## Pipeline
+
+write:  value -> partialize -> {__v,data envelope if versioned} -> serialize -> encode -> storage
+read:   storage -> decode -> deserialize -> unwrap + migrate (if versioned) -> merge -> sig
 
 ## Semantics
 
-- Boot read is synchronous: the stored value is in the signal before persist() returns.
+- Sync backend: stored value is in the signal before persist() returns.
+- Async backend (idbStorage / Promise adapter): signal is restored after
+  handle.ready resolves; not synchronously.
 - A burst of sig.set() inside the window settles to ONE setItem with the latest value.
 - sig.set(undefined) evicts the key (removeItem).
-- Writes are de-duplicated by serialized string (identity-independent), which also
+- Writes are de-duplicated by stored string (identity-independent), which also
   prevents cross-tab echo for object/array values.
-- A received cross-tab `storage` event updates the signal without writing back out.
-- Missing storage (Worker/SSR, no adapter) => inert disposer, no throw.
-- Parse/serialize failures are caught and warned; the app keeps running.
+- A received cross-tab `storage` event updates the signal (through merge) without
+  writing back out.
+- Versioning: on boot, a stored __v older than `version` triggers migrate() and
+  the upgraded envelope is re-persisted immediately. Re-persist self-dedupes.
+- partialize writes only the projected subset; default merge layers it back over
+  the current value on boot so non-persisted fields survive.
+- Missing storage (Worker/SSR, no adapter) => inert handle, silent, no throw.
+- Parse/serialize failures and async-write rejections go to onError; app keeps running.
 
 ## How it works
 
 debounce(sig, ms) from @zakkster/lite-debounce is a reactive combinator returning
 a read-only derived value that mirrors sig, trailing-debounced. persist() does
 `watch(debounce(sig, ms), write)`. Coalescing and zero-alloc come from the
-debounce's sliding-timestamp timer; serialize + storage write happen once per
-settled value, off the mutation hot path.
+debounce's sliding-timestamp timer; the serialize chain + storage write happen
+once per settled value, off the mutation hot path.
 
-## Measured (Node v22, npm run bench, --expose-gc)
+## Measured (Node v23, npm run bench, --expose-gc, MacBook x64)
 
 - Coalescing:   100,000 mutations in one window -> 0 writes during burst, 1 at settle.
-- Hot path:     < 4 KB heap growth over 100,000 sets (~0.04 bytes/mutation).
-- Throughput:   ~6,000,000 mutations/sec absorbed.
-- Naive foil:   write-on-every-change does 100,000 synchronous storage writes for
-                the same burst.
+- Hot path:     8 bytes total heap growth over 100,000 sets (~0.00008 bytes/mutation).
+- Throughput:   ~4,600,000 mutations/sec absorbed (median of 3, ~22ms for 100k sets).
+
+(Numbers vary by hardware and Node version. The ratios — burst -> 1 write,
+hot-path retention ~0 bytes/mutation — are what's stable.)
 
 ## Usage
 
     import { signal } from '@zakkster/lite-signal';
-    import { persist } from '@zakkster/lite-persist';
+    import { persist, idbStorage } from '@zakkster/lite-persist';
 
+    // Web Storage (synchronous)
     const prefs = signal({ theme: 'dark', volume: 80 });
     const stop = persist(prefs, 'app.prefs', { debounce: 50, syncTabs: true });
-    // prefs.set(...) -> one coalesced write per quiet window
-    stop(); // teardown (pending write discarded; pass flushOnDispose:true to keep it)
+
+    // Versioned + allowlisted
+    persist(state, 'app.state', {
+      version: 2,
+      migrate: (d, from) => (from < 2 ? { ...d, volume: d.volume ?? 80 } : d),
+      partialize: (s) => ({ user: s.user, prefs: s.prefs }),
+    });
+
+    // IndexedDB (asynchronous)
+    const big = signal(defaults());
+    const h = persist(big, 'workspace', { storage: idbStorage(), syncTabs: false });
+    await h.ready;  // restored once this resolves
 
 ## Testing
 
-    npm test         # node --test (17 tests)
-    npm run test:gc  # node --expose-gc --test (adds the allocation guarantee test)
-    npm run bench    # node --expose-gc bench/bench.js -> bench/bench-results.json
+    npm test         # node --test (46 pass + 2 skip — the zero-GC memory budget tests need --expose-gc)
+    npm run test:gc  # node --expose-gc --test (all 48 tests; the zero-GC contract guards hot-path allocation)
+    npm run bench    # node --expose-gc bench/bench.js
 
 ## Notes for integrators
 
 - @zakkster/lite-signal MUST resolve to a single instance shared with your app
   (it is a peer dependency) so persist() watches your signals on your reactive graph.
-- For async backends (IndexedDB, server), wrap a synchronous cache that satisfies
-  StorageLike and persist that.
-- Not a state manager, not async storage, not a migration framework.
+- For payloads past the ~5 MB Web Storage limit, use idbStorage() (async; restore
+  after handle.ready). IndexedDB emits no `storage` event, so syncTabs is inert
+  with it -- pair with @zakkster/lite-channel for cross-tab coordination.
+- Not a state manager, not a sync engine (cross-tab is best-effort LWW).

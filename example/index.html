@@ -14,7 +14,7 @@
     <script type="importmap">
 {
   "imports": {
-    "@zakkster/lite-signal": "https://esm.sh/@zakkster/lite-signal@1.1.1",
+    "@zakkster/lite-signal": "https://esm.sh/@zakkster/lite-signal@1.1.5",
     "@zakkster/lite-debounce": "https://esm.sh/@zakkster/lite-debounce@1.0.2?external=@zakkster/lite-signal"
   }
 }
@@ -536,6 +536,55 @@
             padding: 14px;
             font-size: 13px
         }
+
+        /* --- 1.1 pipeline panel ---------------------------------------- */
+        .pipeline { margin-top: 26px; }
+        .pipeline-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+        .pipeline-head h2 { margin: 0; }
+        .vbadge {
+            display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 4px;
+            background: rgba(52, 245, 163, .12); color: var(--phos);
+            font-family: var(--mono); font-size: 11px; font-weight: 700;
+            border: 1px solid var(--phos-dim); vertical-align: middle;
+        }
+        .pipeline-sub { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+        .pipeline-grid {
+            display: grid; grid-template-columns: 1fr 1fr 1.2fr;
+            gap: 18px; align-items: stretch;
+        }
+        @media (max-width: 800px) { .pipeline-grid { grid-template-columns: 1fr; } }
+        .pipeline-input, .pipeline-toggles, .pipeline-out {
+            background: var(--panel-2); border: 1px solid var(--line);
+            border-radius: 8px; padding: 14px;
+        }
+        .json-pair { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+        .json-k { color: var(--amber); font-family: var(--mono); font-size: 13px; min-width: 50px; }
+        .json-pair input {
+            flex: 1; background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+            border-radius: 4px; padding: 6px 8px; font-family: var(--mono); font-size: 13px;
+        }
+        .json-pair input:focus { outline: none; border-color: var(--phos-dim); }
+        .json-note { color: var(--faint); font-size: 11px; font-style: italic; }
+        .prow {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 0; border-bottom: 1px dashed var(--line);
+        }
+        .prow:last-child { border-bottom: none; }
+        .prow .lbl { font-size: 12.5px; }
+        .prow .faint { color: var(--faint); font-size: 11px; }
+        .stored {
+            background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+            padding: 12px; margin: 8px 0 12px; min-height: 70px; max-height: 220px; overflow: auto;
+            font-family: var(--mono); font-size: 11.5px; color: var(--phos);
+            white-space: pre-wrap; word-break: break-all;
+        }
+        .meters-pp { margin: 8px 0 0; }
+        .pipeline .btn {
+            font-family: var(--mono); font-size: 11.5px; padding: 6px 10px;
+            background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+            border-radius: 6px; cursor: pointer;
+        }
+        .pipeline .btn:hover { border-color: var(--phos-dim); }
     </style>
 </head>
 <body>
@@ -615,16 +664,71 @@
             <div class="sub">vs 100k naive</div>
         </div>
         <div class="stat">
-            <div class="big">&lt; 4 KB</div>
+            <div class="big">8 B</div>
             <div class="cap">heap / 100k sets</div>
-            <div class="sub">~0.04 B each</div>
+            <div class="sub">~0.00008 B each</div>
         </div>
         <div class="stat">
-            <div class="big">~6 M/s</div>
+            <div class="big">~4.6 M/s</div>
             <div class="cap">mutations absorbed</div>
-            <div class="sub">Node v22, measured</div>
+            <div class="sub">Node v23, measured</div>
         </div>
     </div>
+
+    <!-- ============================ 1.1 pipeline showcase ============================ -->
+    <section class="card pipeline">
+        <header class="pipeline-head">
+            <h2>Write pipeline <span class="vbadge">1.1</span></h2>
+            <span class="pipeline-sub">value → partialize → version envelope → serialize → encode → storage</span>
+        </header>
+
+        <div class="pipeline-grid">
+            <div class="pipeline-input">
+                <label class="fld">signal state · <code>app.profile</code></label>
+                <div class="json-pair">
+                    <span class="json-k">a</span>
+                    <input id="ppA" type="number" value="1" />
+                </div>
+                <div class="json-pair">
+                    <span class="json-k">b</span>
+                    <input id="ppB" type="number" value="2" />
+                </div>
+                <div class="json-pair">
+                    <span class="json-k">token</span>
+                    <input id="ppT" type="text" value="ephemeral-xyz" />
+                    <span class="json-note">(non-persisted secret)</span>
+                </div>
+            </div>
+
+            <div class="pipeline-toggles">
+                <div class="prow">
+                    <span class="lbl"><b>partialize</b> &nbsp;<span class="faint">— allowlist {a, b}</span></span>
+                    <span class="toggle"><input id="ppPart" type="checkbox" checked /><span class="track"></span><span class="knob"></span></span>
+                </div>
+                <div class="prow">
+                    <span class="lbl"><b>version: 2</b> &nbsp;<span class="faint">— wrap as {__v, data}</span></span>
+                    <span class="toggle"><input id="ppVer" type="checkbox" /><span class="track"></span><span class="knob"></span></span>
+                </div>
+                <div class="prow">
+                    <span class="lbl"><b>encode</b> &nbsp;<span class="faint">— base64(stored)</span></span>
+                    <span class="toggle"><input id="ppEnc" type="checkbox" /><span class="track"></span><span class="knob"></span></span>
+                </div>
+                <div class="prow">
+                    <button class="btn" id="ppSeed">Seed legacy v0 data &amp; reboot</button>
+                    <span class="faint" id="ppSeedNote">enable <b>version: 2</b> first, then click to see migrate() fire</span>
+                </div>
+            </div>
+
+            <div class="pipeline-out">
+                <label class="fld">stored bytes · <code>localStorage["pp.profile"]</code></label>
+                <pre class="stored" id="ppStored">—</pre>
+                <div class="meters meters-pp">
+                    <div class="meter sig"><div class="t">setItem calls</div><div class="n" id="ppWrites">0</div></div>
+                    <div class="meter sto" id="ppMigratedMeter"><div class="t">migrate() fired</div><div class="n" id="ppMigN">0</div></div>
+                </div>
+            </div>
+        </div>
+    </section>
 
     <div class="err" id="err"></div>
 
@@ -854,6 +958,107 @@
     inp.value = note();
     if (inp.value) inp.setAttribute('placeholder', '');
     updateRatio();
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 1.1 pipeline showcase: partialize + version + encode + migrate
+    //
+    // Live-rebuilds a persist() handle whenever any toggle or input changes,
+    // and renders the actual stored bytes so you can SEE how each transform
+    // layer reshapes what hits storage.
+    // ════════════════════════════════════════════════════════════════════════
+    const PP_KEY = 'pp.profile';
+
+    // Counting storage (over the real localStorage) so we can show setItem call counts.
+    let ppWrites = 0, ppMigrations = 0;
+    const ppStorage = {
+        getItem: (k) => localStorage.getItem(k),
+        setItem: (k, v) => { ppWrites++; localStorage.setItem(k, v); render(); },
+        removeItem: (k) => { localStorage.removeItem(k); render(); },
+    };
+
+    // Tiny base64 codec for the encode/decode toggle. ASCII inputs only -- the
+    // demo's inputs are number / short string, so this is fine.
+    const enc64 = (s) => btoa(unescape(encodeURIComponent(s)));
+    const dec64 = (s) => decodeURIComponent(escape(atob(s)));
+
+    const ppEls = {
+        a: document.getElementById('ppA'),
+        b: document.getElementById('ppB'),
+        t: document.getElementById('ppT'),
+        part: document.getElementById('ppPart'),
+        ver: document.getElementById('ppVer'),
+        enc: document.getElementById('ppEnc'),
+        seed: document.getElementById('ppSeed'),
+        stored: document.getElementById('ppStored'),
+        writes: document.getElementById('ppWrites'),
+        migN: document.getElementById('ppMigN'),
+    };
+
+    // Read the live signal state from the input fields.
+    const readState = () => ({
+        a: Number(ppEls.a.value) || 0,
+        b: Number(ppEls.b.value) || 0,
+        token: ppEls.t.value,
+    });
+
+    // The bound signal and its dispose handle. Rebuilt on every config change.
+    let ppSig = null;
+    let ppDispose = null;
+
+    function rebuildPipeline() {
+        if (ppDispose) ppDispose();
+        ppSig = signal(readState());
+
+        const usePart = ppEls.part.checked;
+        const useVer = ppEls.ver.checked;
+        const useEnc = ppEls.enc.checked;
+
+        ppDispose = persist(ppSig, PP_KEY, {
+            storage: ppStorage,
+            debounce: 50,
+            syncTabs: false,
+            ...(usePart && { partialize: (s) => ({ a: s.a, b: s.b }) }),
+            ...(useVer && {
+                version: 2,
+                migrate: (data, from) => {
+                    ppMigrations++;
+                    // Toy migration: v0/v1 data missing `a` defaults to 1.
+                    return { a: data.a ?? 1, b: data.b ?? 2 };
+                },
+            }),
+            ...(useEnc && { encode: enc64, decode: dec64 }),
+        });
+        render();
+    }
+
+    function render() {
+        const raw = localStorage.getItem(PP_KEY);
+        ppEls.stored.textContent = raw === null ? '(empty)' : raw;
+        ppEls.writes.textContent = String(ppWrites);
+        ppEls.migN.textContent = String(ppMigrations);
+    }
+
+    // Wiring: every input + toggle triggers a re-bind. Each rebind disposes
+    // the previous handle, builds a new one with the chosen options, and the
+    // boot read of the existing stored value proves the read pipeline.
+    function onAnyChange() { rebuildPipeline(); }
+    for (const el of [ppEls.a, ppEls.b, ppEls.t]) el.addEventListener('input', () => {
+        // Push the new state into the signal directly -- that's the write path.
+        if (ppSig) ppSig.set(readState());
+    });
+    for (const el of [ppEls.part, ppEls.ver, ppEls.enc]) el.addEventListener('change', onAnyChange);
+
+    ppEls.seed.addEventListener('click', () => {
+        // Plant legacy v0 data (raw, no envelope) directly in storage, then
+        // rebuild the pipeline. If `version: 2` is enabled, migrate() fires
+        // and the upgraded envelope is written back immediately.
+        const legacy = JSON.stringify({ b: 42 });   // missing `a` -> migration kicks in
+        localStorage.setItem(PP_KEY, legacy);
+        ppMigrations = 0;
+        rebuildPipeline();
+    });
+
+    rebuildPipeline();
 </script>
 </body>
 </html>

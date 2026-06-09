@@ -1,15 +1,16 @@
 {
   "name": "@zakkster/lite-persist",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
-  "description": "Zero-GC reactive persistence for lite-signal — debounced, coalesced localStorage/sessionStorage sync with cross-tab mirroring. A burst of signal writes becomes one storage write.",
+  "description": "Zero-GC reactive persistence for lite-signal -- debounced, coalesced localStorage/sessionStorage/IndexedDB sync with cross-tab mirroring, versioned schema migrations, selective persistence, and an encode/decode hook. A burst of signal writes becomes one storage write.",
   "type": "module",
   "sideEffects": false,
-  "main": "Persist.js",
-  "module": "Persist.js",
+  "main": "./Persist.js",
+  "module": "./Persist.js",
   "types": "./Persist.d.ts",
   "exports": {
     ".": {
+      "node": "./Persist.js",
       "types": "./Persist.d.ts",
       "import": "./Persist.js",
       "default": "./Persist.js"
@@ -19,6 +20,7 @@
     "Persist.js",
     "Persist.d.ts",
     "README.md",
+    "CHANGELOG.md",
     "llms.txt",
     "LICENSE.txt"
   ],
@@ -37,7 +39,14 @@
     "zero-allocation",
     "cross-tab",
     "state",
-    "lite-signal"
+    "lite-signal",
+    "indexeddb",
+    "idb",
+    "migration",
+    "schema",
+    "encryption",
+    "async",
+    "allowlist"
   ],
   "scripts": {
     "test": "node --test",
@@ -46,7 +55,7 @@
     "verify": "npm run test:gc && npm run bench"
   },
   "peerDependencies": {
-    "@zakkster/lite-signal": "^1.1.1"
+    "@zakkster/lite-signal": "^1.1.5"
   },
   "dependencies": {
     "@zakkster/lite-debounce": "^1.0.2"
@@ -61,7 +70,14 @@
     "url": "https://github.com/PeshoVurtoleta/lite-persist/issues",
     "email": "shinikchiev@yahoo.com"
   },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/PeshoVurtoleta"
+  },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
   }
 }

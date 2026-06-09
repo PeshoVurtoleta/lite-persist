@@ -6,18 +6,18 @@
     "writes": 0
   },
   "hotPath": {
-    "deltaBytes": -7200,
-    "perSet": -0.072
+    "deltaBytes": 8,
+    "perSet": 0.00008
   },
   "naive": {
-    "deltaBytes": 256,
-    "perSet": 0.00256,
+    "deltaBytes": 16,
+    "perSet": 0.00016,
     "writes": 130000
   },
   "throughput": {
     "label": "persist burst",
-    "ms": 20.446639000000005,
-    "opsPerSec": 4890779.359874255
+    "ms": 20.95939900000002,
+    "opsPerSec": 4771129.172167576
   },
-  "ts": "2026-05-24T21:06:06.174Z"
+  "ts": "2026-06-09T04:26:22.969Z"
 }
